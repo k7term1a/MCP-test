@@ -182,7 +182,10 @@ class CliApp:
 
     async def refresh_resources(self):
         try:
-            self.resources = await self.agent.list_docs_ids()
+            doc_ids = await self.agent.list_docs_ids()
+            # TODO: 呼叫 self.agent.list_video_ids()，把結果跟 doc_ids 合併
+            #       成一份給 @ 自動完成用的清單，例如 self.resources = doc_ids + video_ids
+            self.resources = doc_ids
             self.completer.update_resources(self.resources)
         except Exception as e:
             print(f"Error refreshing resources: {e}")

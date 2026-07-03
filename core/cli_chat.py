@@ -26,6 +26,10 @@ class CliChat(Chat):
     async def get_doc_content(self, doc_id: str) -> str:
         return await self.doc_client.read_resource(f"docs://documents/{doc_id}")
 
+    async def list_video_ids(self) -> list[str]:
+        # TODO: 跟 list_docs_ids 一樣的寫法，改成呼叫 "videos://videos"
+        pass
+
     async def get_prompt(
         self, command: str, doc_id: str
     ) -> list[PromptMessage]:
@@ -41,6 +45,12 @@ class CliChat(Chat):
             if doc_id in mentions:
                 content = await self.get_doc_content(doc_id)
                 mentioned_docs.append((doc_id, content))
+
+        # TODO: 影片不像文件有文字內容可以塞進 prompt。
+        #       這裡不需要「讀取內容」，只要確保被 @ 到的 video_id
+        #       有清楚出現在傳給 LLM 的文字裡，讓它自己決定要不要呼叫
+        #       video_predict(video_id=...) 這個 tool。
+        #       可以用 self.list_video_ids() 確認 mention 是否對應到一個合法的影片 id。
 
         return "".join(
             f'\n<document id="{doc_id}">\n{content}\n</document>\n'
