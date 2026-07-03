@@ -1,5 +1,6 @@
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
+from mcp.server.fastmcp.prompts import base
 
 mcp = FastMCP("DocumentMCP", log_level="ERROR")
 
@@ -45,7 +46,7 @@ def edit_document(
     "docs://documents",
     mime_type="application/json"
 )
-def list_docs() -> List[str]:
+def list_docs() -> list[str]:
     return list(docs.keys())
 
 # Write a resource to return the contents of a particular doc
@@ -83,7 +84,27 @@ Use the 'edit_document' tool to edit the document. After the document has been r
     ]
 
 # Write a prompt to summarize a doc
+@mcp.prompt(
+    name="summarize",
+    description="Summarize "
+)
+def summarize_document(
+    doc_id: str = Field(description="Id of the document to summarize")
+) -> str:
+    prompt = f"""
+Your goal is to create a concise and well-structured summary of a document.
 
+The id of the document you need to summarize is:
+<document_id>
+{doc_id}
+</document_id>
+
+Produce a summary that captures the main ideas, key findings, important decisions, and action items (if any). Organize the summary using markdown syntax with appropriate headers, bullet points, and tables where helpful. Keep the summary concise while preserving the essential information.
+
+Use the 'edit_document' tool to replace the document with the generated summary. After the document has been summarized...
+"""
+    
+    return base.UserMessage(prompt)
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")
