@@ -28,6 +28,7 @@ class CliChat(Chat):
 
     async def list_video_ids(self) -> list[str]:
         # TODO: 跟 list_docs_ids 一樣的寫法，改成呼叫 "videos://videos"
+        return await self.doc_client.read_resource("videos://videos")
         pass
 
     async def get_prompt(
@@ -37,6 +38,10 @@ class CliChat(Chat):
 
     async def _extract_resources(self, query: str) -> str:
         mentions = [word[1:] for word in query.split() if word.startswith("@")]
+
+        video_ids = await self.list_video_ids()
+        if video_id in mentions for video_id in video_ids:
+            return f"user mentioned video id: {video_id}"
 
         doc_ids = await self.list_docs_ids()
         mentioned_docs: list[Tuple[str, str]] = []

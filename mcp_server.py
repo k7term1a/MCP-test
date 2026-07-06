@@ -121,9 +121,13 @@ K600_PREDICT_URL = "http://103.124.75.123:8000/predict/"
 
 def _resolve_video_path(video_id: str) -> Path:
     # TODO: 組出 VIDEOS_DIR / video_id 的完整路徑
+    video_path = VIDEOS_DIR / video_id
     # TODO: 用 .exists()（也可以順便檢查 .is_file()）確認檔案存在，
     #       不存在就 raise ValueError(f"Video with id {video_id} not found")
+    if not video_path.exists():
+        raise ValueError(f"Video with id {video_id} not found")
     # TODO: 回傳這個 Path
+    return video_path
     pass
 
 
@@ -134,8 +138,11 @@ def _resolve_video_path(video_id: str) -> Path:
 )
 def list_videos() -> list[str]:
     # TODO: 用 VIDEOS_DIR.iterdir() 掃出目錄下的檔案
+    video_list = VIDEOS_DIR.iterdir()
     # TODO: 只留下副檔名在 VIDEO_EXTENSIONS 裡的檔案（用 .suffix.lower()）
+    video_list = [video for video in video_list if video.suffix.lower() in VIDEO_EXTENSIONS]
     # TODO: 回傳這些檔案的檔名（.name）組成的 list，當作 video_id
+    return [video.name for video in video_list]
     pass
 
 # Write a resource to return the file path of a particular video (mirrors fetch_doc above)
@@ -145,6 +152,8 @@ def list_videos() -> list[str]:
 )
 def fetch_video(video_id: str) -> str:
     # TODO: 呼叫 _resolve_video_path(video_id)，把結果轉成字串回傳
+    video_path = _resolve_video_path(video_id)
+    return str(video_path)
     pass
 
 @mcp.tool(
@@ -158,17 +167,26 @@ def video_predict(
 ):
     # TODO 1: 呼叫 _resolve_video_path(video_id) 拿到檔案路徑
     #         (video_id 不存在時它會自己 raise ValueError，不用重複檢查)
+    video_path = _resolve_video_path(video_id)
 
     # TODO 2: 用 open(path, "rb") 開檔，記得用 with 語法確保檔案用完會關閉
-
     # TODO 3: 用 httpx.post(K600_PREDICT_URL, files={"video": file_obj}, timeout=...)
     #         呼叫 K600 服務。影片辨識可能要花不少時間，timeout 記得抓寬一點
+    with open(video_path, "rb") as file_obj:
+        try:
+            response = httpx.post(K600_PREDICT_URL, files={"file": file_obj}, timeout=300.0)
 
     # TODO 4: response.raise_for_status() 檢查狀態，並回傳 response.json()
     #         或整理過的精簡結果（提示：不要把 per-frame 完整結果整包塞回去，
     #         會佔用大量 tool result token）
-
+            response.raise_for_status()
+            result = response.json()
+            return result
     # TODO 5: 用 try/except 包住 httpx 呼叫，網路錯誤時 raise ValueError 並附上錯誤訊息
+        except httpx.RequestError as e:
+            raise ValueError(f"An error occurred while requesting {e.request.url!r}.") from e
+        except httpx.HTTPStatusError as e:
+            raise ValueError(f"Error response {e.response.status_code} while requesting {e.request.url!r}.") from e
     pass
 
 
