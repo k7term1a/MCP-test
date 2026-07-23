@@ -27,7 +27,13 @@ mcp = FastMCP(
 VIDEOS_DIR = Path("K600test")
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv"}
 
-K600_PREDICT_URL = "http://103.124.75.123:8000/predict/"
+K600_PREDICT_URL = os.getenv("K600_PREDICT_URL")
+if not K600_PREDICT_URL:
+    raise RuntimeError(
+        "K600_PREDICT_URL environment variable is not set. Point it at your "
+        "own K600 recognition service's /predict/ endpoint, e.g. "
+        "http://<your-host>:8000/predict/"
+    )
 
 
 def _resolve_video_path(video_id: str) -> Path:

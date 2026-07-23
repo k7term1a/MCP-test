@@ -35,7 +35,20 @@ async def connect(stack: AsyncExitStack) -> ClientSession:
         )
     else:
         print("No MCP_SERVER_URL set, spawning mcp_server.py over stdio ...")
-        params = StdioServerParameters(command="uv", args=["run", "mcp_server.py"])
+        # A spawned MCP server only inherits a curated safe subset of the
+        # parent's environment (see mcp.client.stdio.get_default_environment),
+        # not custom vars like K600_PREDICT_URL — pass it through explicitly.
+        k600_url = os.environ.get("K600_PREDICT_URL")
+        if not k600_url:
+            raise SystemExit(
+                "K600_PREDICT_URL is not set. Export it before running this "
+                "script, e.g. export K600_PREDICT_URL=http://<your-host>:8000/predict/"
+            )
+        params = StdioServerParameters(
+            command="uv",
+            args=["run", "mcp_server.py"],
+            env={"K600_PREDICT_URL": k600_url},
+        )
         read, write = await stack.enter_async_context(stdio_client(params))
 
     session = await stack.enter_async_context(ClientSession(read, write))
