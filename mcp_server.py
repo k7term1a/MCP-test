@@ -1,118 +1,29 @@
+import io
+import os
+import re
 from pathlib import Path
+from urllib.parse import unquote
 
 import httpx
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
-from mcp.server.fastmcp.prompts import base
 
-mcp = FastMCP("DocumentMCP", log_level="ERROR")
-
-
-docs = {
-    "deposition.md": "This deposition covers the testimony of Angela Smith, P.E.",
-    "report.pdf": "The report details the state of a 20m condenser tower.",
-    "financials.docx": "These financials outline the project's budget and expenditures.",
-    "outlook.pdf": "This document presents the projected future performance of the system.",
-    "plan.md": "The plan outlines the steps for the project's implementation.",
-    "spec.txt": "These specifications define the technical requirements for the equipment.",
-}
-
-# Write a tool to read a doc
-@mcp.tool(
-    name="read_doc_contents",
-    description="Read the contents of a document and return it as a string."
+# Transport is chosen at process start (see __main__ block below):
+# - stdio (default): read/write JSON-RPC over stdin/stdout, for a client that
+#   spawns this script as a local subprocess.
+# - streamable-http: run this as a standalone, long-lived network service so
+#   remote clients can reach it over HTTP.
+#   Host/port only matter for streamable-http; they're ignored for stdio.
+mcp = FastMCP(
+    "K600VideoPredictMCP",
+    log_level="ERROR",
+    host=os.getenv("MCP_HOST", "0.0.0.0"),
+    port=int(os.getenv("MCP_PORT", "8210")),
 )
-def read_document(
-    doc_id: str = Field(description="Id of the document to read")
-):
-    if doc_id not in docs:
-        raise ValueError(f"Doc with id {doc_id} not found")
-
-    return docs[doc_id]
-    
-# Write a tool to edit a doc
-@mcp.tool(
-    name="edit_document",
-    description="Edit a document by replacing a string in the documents content with a new string."
-)
-def edit_document(
-    doc_id: str = Field(description="Id of the document that will be edited"),
-    old_str: str = Field(description="The text to replace. Must match exactly, including whitespace."),
-    new_str: str = Field(description="The new text to insert in place of the old text.")
-):
-    if doc_id not in docs:
-        raise ValueError(f"Doc with id {doc_id} not foune")
-    docs[doc_id] = docs[doc_id].replace(old_str, new_str)
-
-# Write a resource to return all doc id's
-@mcp.resource(
-    "docs://documents",
-    mime_type="application/json"
-)
-def list_docs() -> list[str]:
-    return list(docs.keys())
-
-# Write a resource to return the contents of a particular doc
-@mcp.resource(
-    "docs://documents/{doc_id}",
-    mime_type="text/plain"
-)
-def fetch_doc(doc_id: str) -> str:
-    if doc_id not in docs:
-        raise ValueError(f"Doc with id {doc_id} not found")
-    return docs[doc_id]
-
-# Write a prompt to rewrite a doc in markdown format
-@mcp.prompt(
-    name="format",
-    description="Rewrites the contents of the document in Markdown format."
-)
-def format_document(
-    doc_id: str = Field(description="Id of the document to format")
-) -> list[base.Message]:
-    prompt = f"""
-Your goal is to reformat a document to be written with markdown syntax.
-
-The id of the document you need to reformat is:
-<document_id>
-{doc_id}
-</document_id>
-
-Add in headers, bullet points, tables, etc as necessary. Feel free to add in structure.
-Use the 'edit_document' tool to edit the document. After the document has been reformatted...
-"""
-    
-    return [
-        base.UserMessage(prompt)
-    ]
-
-# Write a prompt to summarize a doc
-@mcp.prompt(
-    name="summarize",
-    description="Summarize "
-)
-def summarize_document(
-    doc_id: str = Field(description="Id of the document to summarize")
-) -> str:
-    prompt = f"""
-Your goal is to create a concise and well-structured summary of a document.
-
-The id of the document you need to summarize is:
-<document_id>
-{doc_id}
-</document_id>
-
-Produce a summary that captures the main ideas, key findings, important decisions, and action items (if any). Organize the summary using markdown syntax with appropriate headers, bullet points, and tables where helpful. Keep the summary concise while preserving the essential information.
-
-Use the 'edit_document' tool to replace the document with the generated summary. After the document has been summarized...
-"""
-    
-    return base.UserMessage(prompt)
 
 # Videos live on disk under this directory instead of an in-memory dict.
-# mcp_server.py runs as a local subprocess of the CLI app, so this path
-# just needs to be readable on this machine. Adjust if K600test isn't
-# next to mcp_server.py.
+# Adjust if K600test isn't next to mcp_server.py, or run the process with
+# this as the working directory.
 VIDEOS_DIR = Path("K600test")
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv"}
 
@@ -120,75 +31,105 @@ K600_PREDICT_URL = "http://103.124.75.123:8000/predict/"
 
 
 def _resolve_video_path(video_id: str) -> Path:
-    # TODO: 組出 VIDEOS_DIR / video_id 的完整路徑
     video_path = VIDEOS_DIR / video_id
-    # TODO: 用 .exists()（也可以順便檢查 .is_file()）確認檔案存在，
-    #       不存在就 raise ValueError(f"Video with id {video_id} not found")
     if not video_path.exists():
         raise ValueError(f"Video with id {video_id} not found")
-    # TODO: 回傳這個 Path
     return video_path
-    pass
 
 
-# Write a resource to return all video id's (mirrors list_docs above)
+# Write a resource to return all video id's
 @mcp.resource(
     "videos://videos",
     mime_type="application/json"
 )
 def list_videos() -> list[str]:
-    # TODO: 用 VIDEOS_DIR.iterdir() 掃出目錄下的檔案
     video_list = VIDEOS_DIR.iterdir()
-    # TODO: 只留下副檔名在 VIDEO_EXTENSIONS 裡的檔案（用 .suffix.lower()）
     video_list = [video for video in video_list if video.suffix.lower() in VIDEO_EXTENSIONS]
-    # TODO: 回傳這些檔案的檔名（.name）組成的 list，當作 video_id
     return [video.name for video in video_list]
-    pass
 
-# Write a resource to return the file path of a particular video (mirrors fetch_doc above)
+
+# Write a resource to return the file path of a particular video
 @mcp.resource(
     "videos://videos/{video_id}",
     mime_type="text/plain"
 )
 def fetch_video(video_id: str) -> str:
-    # TODO: 呼叫 _resolve_video_path(video_id)，把結果轉成字串回傳
     video_path = _resolve_video_path(video_id)
     return str(video_path)
-    pass
+
+
+def _call_k600_predict(file_obj, filename: str):
+    """Shared K600 call used by both the local-file and URL-based tools."""
+    try:
+        response = httpx.post(
+            K600_PREDICT_URL,
+            files={"file": (filename, file_obj)},
+            timeout=300.0,
+        )
+        response.raise_for_status()
+        return response.json()
+    except httpx.RequestError as e:
+        raise ValueError(f"An error occurred while requesting {e.request.url!r}.") from e
+    except httpx.HTTPStatusError as e:
+        raise ValueError(
+            f"Error response {e.response.status_code} while requesting {e.request.url!r}: "
+            f"{e.response.text}"
+        ) from e
+
 
 @mcp.tool(
     name="video_predict",
-    description="Predict the contents of a video based on K600 video datasets."
+    description="Predict the contents of a video that already lives in the local K600test/ folder."
 )
 def video_predict(
     video_id: str = Field(
         description="Id of the video to predict (see the videos:// resource for available ids)"
     )
 ):
-    # TODO 1: 呼叫 _resolve_video_path(video_id) 拿到檔案路徑
-    #         (video_id 不存在時它會自己 raise ValueError，不用重複檢查)
     video_path = _resolve_video_path(video_id)
-
-    # TODO 2: 用 open(path, "rb") 開檔，記得用 with 語法確保檔案用完會關閉
-    # TODO 3: 用 httpx.post(K600_PREDICT_URL, files={"video": file_obj}, timeout=...)
-    #         呼叫 K600 服務。影片辨識可能要花不少時間，timeout 記得抓寬一點
     with open(video_path, "rb") as file_obj:
-        try:
-            response = httpx.post(K600_PREDICT_URL, files={"file": file_obj}, timeout=300.0)
+        return _call_k600_predict(file_obj, video_path.name)
 
-    # TODO 4: response.raise_for_status() 檢查狀態，並回傳 response.json()
-    #         或整理過的精簡結果（提示：不要把 per-frame 完整結果整包塞回去，
-    #         會佔用大量 tool result token）
-            response.raise_for_status()
-            result = response.json()
-            return result
-    # TODO 5: 用 try/except 包住 httpx 呼叫，網路錯誤時 raise ValueError 並附上錯誤訊息
-        except httpx.RequestError as e:
-            raise ValueError(f"An error occurred while requesting {e.request.url!r}.") from e
-        except httpx.HTTPStatusError as e:
-            raise ValueError(f"Error response {e.response.status_code} while requesting {e.request.url!r}.") from e
-    pass
+
+def _filename_from_content_disposition(headers: httpx.Headers) -> str | None:
+    disposition = headers.get("content-disposition", "")
+    match = re.search(r"filename\*=UTF-8''([^;]+)", disposition, re.IGNORECASE)
+    if match:
+        return unquote(match.group(1))
+    match = re.search(r'filename="?([^";]+)"?', disposition, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return None
+
+
+@mcp.tool(
+    name="video_predict_url",
+    description=(
+        "Predict the contents of a video given a downloadable URL. "
+        "Use this instead of video_predict when the video isn't already "
+        "in the local K600test/ folder."
+    )
+)
+def video_predict_url(
+    video_url: str = Field(description="A URL the video can be downloaded from")
+):
+    try:
+        download = httpx.get(video_url, timeout=300.0, follow_redirects=True)
+        download.raise_for_status()
+    except httpx.RequestError as e:
+        raise ValueError(f"Could not download video from {video_url!r}: {e}") from e
+    except httpx.HTTPStatusError as e:
+        raise ValueError(
+            f"Error response {e.response.status_code} while downloading {video_url!r}."
+        ) from e
+
+    filename = (
+        _filename_from_content_disposition(download.headers)
+        or Path(httpx.URL(video_url).path).name
+        or "video.mp4"
+    )
+    return _call_k600_predict(io.BytesIO(download.content), filename)
 
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    mcp.run(transport=os.getenv("MCP_TRANSPORT", "stdio"))

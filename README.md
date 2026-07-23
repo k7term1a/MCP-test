@@ -1,113 +1,118 @@
-# MCP Chat
+# K600 Video Predict MCP Server
 
-MCP Chat is a command-line interface application that enables interactive chat capabilities with AI models through the OpenAI API. The application supports document retrieval, command-based prompts, and extensible tool integrations via the MCP (Model Control Protocol) architecture.
+An MCP (Model Context Protocol) server that predicts the action happening in a
+video using a Kinetics-600 (K600) recognition service. Built with the
+official Python `mcp` SDK (`FastMCP`).
+
+## What it provides
+
+Two tools:
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `video_predict` | `video_id: str` | Predicts a video that already lives in the local `K600test/` folder. `video_id` is just the filename. |
+| `video_predict_url` | `video_url: str` | Downloads a video from a URL and predicts it. Use this when the video isn't already in `K600test/`. |
+
+Two resources for discovering what's available locally:
+
+| Resource | Description |
+|---|---|
+| `videos://videos` | Lists the video ids (filenames) available in `K600test/` |
+| `videos://videos/{video_id}` | Returns the local file path for a given video id |
+
+Both tools return the raw JSON from the K600 recognition service, e.g.:
+
+```json
+{
+  "filename": "1600.mp4",
+  "model_mode": "Kinetics-600 (K600)",
+  "predictions": [
+    {"rank": 1, "action_name": "unloading truck (卸貨)", "confidence": 97.67, "confidence_str": "97.67%"}
+  ],
+  "inference_time_sec": 1.89,
+  "status": "success"
+}
+```
 
 ## Prerequisites
 
-- Python 3.9+
-- OpenAI API Key
+- Python 3.10+
+- Network access to the K600 recognition service (hardcoded as
+  `K600_PREDICT_URL` in `mcp_server.py`, currently
+  `http://103.124.75.123:8000/predict/`)
+- A `K600test/` folder next to `mcp_server.py`, populated with video files
+  (`.mp4`/`.mov`/`.avi`/`.mkv`), if you plan to use `video_predict` (not
+  needed for `video_predict_url`)
 
 ## Setup
 
-### Step 1: Configure the environment variables
-
-1. Create or edit the `.env` file in the project root and verify that the following variables are set correctly:
-
-```
-OPENAI_MODEL="gpt-4o"  # Enter the OpenAI model you want to use
-OPENAI_API_KEY=""      # Enter your OpenAI API secret key
-OPENAI_BASE_URL=""     # Optional: point to an OpenAI-compatible endpoint instead of api.openai.com
+```bash
+pip install uv        # if you don't have it already
+uv sync
 ```
 
-### Step 2: Install dependencies
+## Running the server
 
-#### Option 1: Setup with uv (Recommended)
-
-[uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver.
-
-1. Install uv, if not already installed:
+The transport is chosen via environment variables at process start:
 
 ```bash
-pip install uv
+# stdio (default) — for a client that spawns this script as a subprocess.
+# No env vars needed.
+uv run mcp_server.py
+
+# streamable-http — run as a standalone, long-lived network service that
+# remote clients connect to over HTTP.
+MCP_TRANSPORT=streamable-http MCP_HOST=0.0.0.0 MCP_PORT=8210 uv run mcp_server.py
 ```
 
-2. Create and activate a virtual environment:
+In `streamable-http` mode the server listens at `http://<host>:<port>/mcp`
+(the `/mcp` path is fixed). It needs to stay running as a long-lived
+process — use `systemd`, `tmux`, `nohup ... &`, or similar, rather than a
+one-off foreground run.
+
+## Connecting to it
+
+### Connection notes
+
+- **No authentication.** Anything that can reach the port can call every
+  tool. Don't expose this to an untrusted network without adding your own
+  auth (e.g. a header check in front of it) or firewalling by source IP.
+- **Predictions can be slow.** The K600 call uses a 300-second timeout on
+  the server side; if your client has its own timeout, set it generously
+  (e.g. ≥ 300s / 5 minutes) rather than the default a few seconds most HTTP
+  clients ship with.
+- **`video_predict_url` fetches arbitrary URLs.** There's no domain
+  allowlist. If you expose this tool to untrusted callers, consider adding
+  one — otherwise it can be used as an SSRF pivot against your internal
+  network.
+- Any MCP client that supports the `streamable-http` transport can connect
+  directly to `http://<host>:8210/mcp` — no special setup is otherwise
+  required.
+
+### Example: minimal Python client
+
+See [`demo_client.py`](demo_client.py) for a runnable example using the
+official `mcp` SDK. By default it spawns `mcp_server.py` itself over stdio
+(zero setup beyond `uv sync`):
 
 ```bash
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+uv run demo_client.py
 ```
 
-3. Install dependencies:
+Or point it at an already-running `streamable-http` instance:
 
 ```bash
-uv pip install -e .
+MCP_SERVER_URL=http://localhost:8210/mcp uv run demo_client.py
 ```
 
-4. Run the project
+Predict a video from a URL instead of the local `K600test/` folder:
 
 ```bash
-uv run main.py
+uv run demo_client.py https://example.com/some-video.mp4
 ```
-
-#### Option 2: Setup without uv
-
-1. Create and activate a virtual environment:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-```
-
-2. Install dependencies:
-
-```bash
-pip install openai python-dotenv prompt-toolkit "mcp[cli]==1.8.0"
-```
-
-3. Run the project
-
-```bash
-python main.py
-```
-
-## Usage
-
-### Basic Interaction
-
-Simply type your message and press Enter to chat with the model.
-
-### Document Retrieval
-
-Use the @ symbol followed by a document ID to include document content in your query:
-
-```
-> Tell me about @deposition.md
-```
-
-### Commands
-
-Use the / prefix to execute commands defined in the MCP server:
-
-```
-> /summarize deposition.md
-```
-
-Commands will auto-complete when you press Tab.
 
 ## Development
 
-### Adding New Documents
-
-Edit the `mcp_server.py` file to add new documents to the `docs` dictionary.
-
-### Implementing MCP Features
-
-To fully implement the MCP features:
-
-1. Complete the TODOs in `mcp_server.py`
-2. Implement the missing functionality in `mcp_client.py`
-
-### Linting and Typing Check
-
-There are no lint or type checks implemented.
+`mcp_server.py` is a single file — no external `core/` package dependency.
+The K600 endpoint (`K600_PREDICT_URL`) is a module-level constant if it ever
+needs to change.
